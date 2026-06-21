@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>עוזר מסחר</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <div class="brand-icon"><div class="brand-diamond"></div></div>
+      <div>
+        <div class="brand-title">עוזר מסחר</div>
+        <div class="brand-sub">TRADING CO-PILOT</div>
+      </div>
+    </div>
+
+    <div class="portfolio-pill">
+      <span class="pill-label">שווי תיק כולל</span>
+      <span id="hdr-total" class="mono pill-value">—</span>
+      <span id="hdr-pct" class="mono pill-badge">—</span>
+    </div>
+
+    <div class="header-actions">
+      <div class="model-badge">
+        <span class="status-dot"></span>
+        <span class="mono">Gemini 2.5 Flash</span>
+        <span class="sep">·</span>
+        <span class="paid-label">Paid</span>
+      </div>
+      <button id="sync-btn" class="sync-btn" onclick="syncMarket()">
+        <span>⟳</span> סנכרן נתוני שוק
+      </button>
+    </div>
+  </header>
+
+  <!-- ===== KPI STRIP ===== -->
+  <div class="kpi-strip">
+    <div class="kpi-card">
+      <div class="kpi-label">שווי ספר המסחר ($)</div>
+      <div id="kpi-book" class="mono kpi-value">—</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">רווח/הפסד פתוח</div>
+      <div class="kpi-pnl-row">
+        <span id="kpi-pnl" class="mono kpi-value" style="color:#54c98a">—</span>
+        <span id="kpi-pnl-pct" class="mono kpi-pct" style="color:#54c98a">—</span>
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">פוזיציות פתוחות</div>
+      <div id="kpi-count" class="mono kpi-value">—</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">יתרה למסחר (₪)</div>
+      <div id="kpi-cash" class="mono kpi-value">—</div>
+    </div>
+  </div>
+
+  <!-- ===== BODY GRID ===== -->
+  <div class="body-grid">
+
+    <!-- PRIMARY COLUMN -->
+    <div class="primary-col">
+
+      <!-- Triggered alerts -->
+      <div id="alerts-container"></div>
+
+      <!-- Positions panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            📊 פוזיציות פתוחות
+            <span id="pos-count-label" class="panel-count">—</span>
+          </div>
+          <span id="pos-updated" class="panel-meta">טוען...</span>
+        </div>
+        <div class="table-wrap">
+          <table id="positions-table">
+            <thead>
+              <tr>
+                <th>נייר</th>
+                <th class="ltr">כמות</th>
+                <th class="ltr">שער כניסה</th>
+                <th class="ltr">מחיר נוכחי</th>
+                <th class="ltr">שווי ($)</th>
+                <th class="ltr">רווח/הפסד</th>
+                <th class="ltr">סטופ דינמי</th>
+                <th>סטטוס</th>
+              </tr>
+            </thead>
+            <tbody id="positions-body">
+              <tr><td colspan="8" class="loading-row">טוען נתונים...</td></tr>
+            </tbody>
+            <tfoot id="positions-foot"></tfoot>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- SIDE COLUMN -->
+    <div class="side-col">
+
+      <!-- Watchlist -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            👁️ רשימת מעקב
+            <span id="watch-count-label" class="panel-count">—</span>
+          </div>
+        </div>
+        <div id="watchlist-body" class="watchlist-body">
+          <div class="loading-row">טוען...</div>
+        </div>
+      </div>
+
+
+      <!-- Chat co-pilot -->
+      <div class="panel chat-panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="chat-icon">✦</span>
+            צ'אט עוזר המסחר
+          </div>
+          <span id="chat-agent-badge" class="panel-meta"></span>
+        </div>
+
+        <div id="chat-messages" class="chat-messages"></div>
+
+        <div class="chat-chips">
+          <button class="chip" onclick="sendChip('עדכן סטופים כללי')">עדכן סטופים כללי</button>
+          <button class="chip" onclick="sendChip('מה המצב של התיק שלי')">מצב התיק</button>
+          <button class="chip" onclick="sendChip('הצג פוזיציות')">הצג פוזיציות</button>
+        </div>
+
+        <div class="chat-input-row">
+          <input id="chat-input" type="text"
+            placeholder="שאל שאלה, הקלד פקודה..."
+            onkeydown="if(event.key==='Enter') sendMessage()">
+          <button class="send-btn" onclick="sendMessage()">↑</button>
+        </div>
+      </div>
+
+      <!-- Latest advice -->
+      <div class="panel" id="advice-panel" style="display:none">
+        <div class="panel-header">
+          <div class="panel-title">📋 ניתוח אחרון</div>
+          <span id="advice-ts" class="panel-meta">—</span>
+        </div>
+        <div id="advice-body" class="advice-body"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
