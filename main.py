@@ -168,7 +168,15 @@ async def chat(body: ChatBody):
     async def stream():
         try:
             # ניתוב
-            routing = route(body.message)
+            routing = route(body.message, has_image=False)
+
+            # CLARIFY — הסוכן לא בטוח, שולח שאלה חזרה
+            if routing["agent"] == "CLARIFY":
+                question = routing.get("question", "תוכל להבהיר?")
+                yield f"data: {_json.dumps({'clarify': True, 'text': question}, ensure_ascii=False)}\n\n"
+                yield f"data: {_json.dumps({'done': True, 'agent': 'router'}, ensure_ascii=False)}\n\n"
+                return
+
             agent   = routing["agent"]
             context = routing["context"]
 
@@ -220,15 +228,27 @@ async def chat_image(body: ChatImageBody):
     הכניסה: { image_data, image_mime, message, trade_type, history }
     """
     from agents.chart_analyst import analyze_chart, validate_for_save
+    from agents.router import route
+
+    # ניתוב עם has_image=True — הסוכן יודע שיש תמונה
+    routing        = route(body.message, has_image=True)
+    effective_type = routing.get("trade_type", body.trade_type)
 
     async def stream():
         try:
-            yield f"data: {_json.dumps({'agent': 'chart_analyst', 'context': body.trade_type}, ensure_ascii=False)}\n\n"
+            # CLARIFY — הסוכן לא בטוח, שולח שאלה, התמונה תישמר ב-client
+            if routing["agent"] == "CLARIFY":
+                question = routing.get("question", "תוכל להבהיר?")
+                yield f"data: {_json.dumps({'clarify': True, 'text': question}, ensure_ascii=False)}\n\n"
+                yield f"data: {_json.dumps({'done': True, 'agent': 'router', 'keep_image': True}, ensure_ascii=False)}\n\n"
+                return
+
+            yield f"data: {_json.dumps({'agent': 'chart_analyst', 'context': effective_type}, ensure_ascii=False)}\n\n"
 
             img_bytes = _b64.b64decode(body.image_data)
             result    = analyze_chart(
                 image_bytes=img_bytes,
-                trade_type=body.trade_type,
+                trade_type=effective_type,
                 extra_context=body.message,
             )
 

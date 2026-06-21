@@ -332,11 +332,18 @@ async function sendMessage() {
         if (!line.startsWith('data: ')) continue;
         try {
           const data = JSON.parse(line.slice(6));
-          if (data.agent)  addAgentBadge(data.agent, data.context || '');
-          if (data.text)  { fullText += data.text; assistantBubble.textContent = fullText; }
+          if (data.agent && !data.clarify) addAgentBadge(data.agent, data.context || '');
+          if (data.clarify) {
+            // הסוכן לא בטוח — מציג שאלה, שומר תמונה אם יש
+            assistantBubble.remove();
+            addBubble('🤔 ' + data.text, 'assistant');
+            // keep_image=true אומר שהתמונה תישמר עד לתשובה הבאה
+          }
+          if (data.text && !data.clarify) { fullText += data.text; assistantBubble.textContent = fullText; }
           if (data.error) { assistantBubble.textContent = '⚠️ שגיאה: ' + data.error; }
           if (data.done)  {
-            chatHistory.push({ role: 'assistant', text: fullText });
+            if (!data.keep_image) window._pendingImage = null;
+            if (fullText) chatHistory.push({ role: 'assistant', text: fullText });
             document.getElementById('chat-messages').scrollTop = 99999;
           }
         } catch {}
