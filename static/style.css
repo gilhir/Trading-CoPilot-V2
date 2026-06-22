@@ -374,3 +374,25 @@ tfoot td:first-child { padding-right: 20px; font-weight: 800; font-size: 13.5px;
 }
 .send-btn:hover { filter: brightness(1.08); }
 .send-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* ===== CHAT CHIPS — VARIANTS ===== */
+.chip-accent {
+  color: var(--green);
+  background: rgba(84,201,138,0.12);
+  border-color: rgba(84,201,138,0.3);
+}
+.chip-accent:hover { background: rgba(84,201,138,0.2); color: var(--green); }
+
+.chip-danger {
+  color: var(--text3);
+  background: var(--bg4);
+  border-color: rgba(255,255,255,0.1);
+}
+.chip-danger:hover { color: var(--red); border-color: rgba(229,116,108,0.3); }
+
+.chip:disabled,
+.chip-accent:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}

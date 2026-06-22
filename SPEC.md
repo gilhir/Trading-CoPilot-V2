@@ -27,39 +27,43 @@
 
 ```
 copilot_v2/
-├── SPEC.md                          # ← המסמך הזה
-├── main.py                          # FastAPI app + router imports (אין לוגיקה)
+├── SPEC.md
+├── main.py                          # FastAPI app + router imports
 ├── database.py                      # כל גישה ל-SQLite
 │
 ├── agents/
 │   ├── __init__.py
-│   ├── client.py                    # אתחול Gemini client + retry logic
-│   ├── registry.py                  # רשימת סוכנים פעילים — דינמי
+│   ├── client.py                    # generate() + re-export generate_with_history
+│   ├── client_history.py            # generate_with_history (max_output_tokens=8192)
+│   ├── registry.py                  # רשימת סוכנים — short_term supports_image=True
 │   ├── router.py                    # Supervisor: intent detection + confidence
 │   ├── chart_analyst.py             # ניתוח גרף ראשוני (vision)
 │   ├── chart_analyst_session.py     # המשך תחקיר chart_analyst
-│   ├── chart_analyst_contents.py    # בניית contents לGemini (implicit caching)
-│   ├── short_term.py                # ניתוח סווינג: analyze_short_term + analyze_st_followup
-│   ├── short_term_prompt.py         # system prompt + 6 חוקי מיכה
-│   ├── short_term_contents.py       # build_st_contents — עוטף chart_analyst_contents
-│   ├── long_term.py                 # ניתוח מבני, חוק 1%
-│   └── portfolio.py                 # EOD audit, stop review
+│   ├── chart_analyst_contents.py    # build_session_contents (implicit caching)
+│   ├── short_term.py                # analyze_short_term + analyze_st_followup + לוגים
+│   ├── short_term_prompt.py         # 6 חוקים + thesis + stop + drill_down rules
+│   ├── short_term_parser.py         # parsing, validate, to_watchlist_payload
+│   ├── short_term_contents.py       # build_st_contents
+│   ├── short_term_drill_down.py     # DRILL_DOWN_RULES + parse_drill_down
+│   ├── long_term.py                 # ⬜ TODO
+│   └── portfolio.py                 # ⬜ TODO
 │
 ├── routes/
 │   ├── __init__.py
-│   ├── chat.py                      # POST /api/chat — short_term מחובר לסוכן ייעודי
-│   ├── image_session.py             # POST /api/chat/image — chart_analyst + short_term
-│   └── session.py                   # POST /api/chat/session — chart_analyst + short_term
+│   ├── chat.py                      # POST /api/chat
+│   ├── image_session.py             # POST /api/chat/image — לוגים מפורטים
+│   ├── session.py                   # POST /api/chat/session — DRILL_DOWN תמיכה
+│   └── watchlist_add.py             # POST /api/watchlist/add ← חדש
 │
 ├── services/
-│   ├── market_data.py               # yfinance wrapper
-│   ├── excel_parser.py              # המרת אקסל בנק → DB
-│   └── webhook.py                   # TradingView handler
+│   ├── market_data.py               # ⬜ TODO
+│   ├── excel_parser.py              # ⬜ TODO
+│   └── webhook.py                   # ⬜ TODO
 │
 ├── static/
-│   ├── index.html                   # Dashboard ראשי
-│   ├── app.js                       # fetch + SSE + UI + session logic
-│   └── style.css                    # עיצוב
+│   ├── index.html                   # chat-chips-container (דינמי)
+│   ├── app.js                       # _updateChips + addToWatchlist + session chips
+│   └── style.css                    # + chip-accent / chip-danger variants
 │
 └── tests/
     ├── test_database.py
@@ -77,11 +81,11 @@ copilot_v2/
 | symbol | TEXT PK | טיקר |
 | quantity | REAL | כמות מניות |
 | avg_cost_price | REAL | שער כניסה ממוצע |
-| current_price | REAL | מחיר נוכחי (מעודכן מ-yfinance) |
+| current_price | REAL | מחיר נוכחי |
 | direction | TEXT | LONG / SHORT |
 | entry_thesis | TEXT | תזת כניסה |
-| initial_stop_loss | REAL | סטופ ראשוני (לא זזים ידנית) |
-| dynamic_stop_loss | REAL | סטופ נגרר (0.0 = לא הוגדר) |
+| initial_stop_loss | REAL | סטופ ראשוני |
+| dynamic_stop_loss | REAL | סטופ נגרר |
 | asset_name | TEXT | שם החברה |
 | trade_type | TEXT | LONG_TERM / SHORT_TERM |
 
@@ -91,145 +95,97 @@ copilot_v2/
 | symbol | TEXT PK | |
 | required_setup_conditions | TEXT | תנאים לכניסה |
 | trigger_price_zone | REAL | מחיר טריגר |
-| current_status | TEXT | Pending Alert / Triggered - Awaiting Confirmation / TRIGGERED |
+| current_status | TEXT | Pending Alert / Triggered - Awaiting Confirmation |
 | stop_loss | REAL | סטופ מוצע |
 | thesis_summary | TEXT | תזה |
-| activation_trigger_price | REAL | מחיר בעת הפעלה |
-| activation_trigger_time | TEXT | זמן הפעלה |
-| dismissal_notes | TEXT | סיבת ביטול |
+| activation_trigger_price | REAL | |
+| activation_trigger_time | TEXT | |
+| dismissal_notes | TEXT | |
 | trade_type | TEXT | LONG_TERM / SHORT_TERM |
-
-### trade_history_ledger
-| עמודה | טיפוס | הערות |
-|---|---|---|
-| order_id | INTEGER PK | |
-| symbol | TEXT | |
-| action | TEXT | BUY / SELL |
-| execution_price | REAL | |
-| executed_quantity | REAL | |
-| exit_reason | TEXT | |
-| post_mortem_notes | TEXT | |
-
-### portfolio_advice
-| עמודה | טיפוס | הערות |
-|---|---|---|
-| id | INTEGER PK | |
-| timestamp | TEXT | |
-| advice_text | TEXT | מרקדאון |
 
 ---
 
 ## מודלים לפי סוכן
 
-| סוכן | model_key | מודל בפועל | הסיבה |
+| סוכן | model_key | מודל | max_tokens |
 |---|---|---|---|
-| router.py | lite | gemini-3.1-flash-lite | ניתוב בלבד, זול, מהיר |
-| chart_analyst.py | smart | gemini-3.5-flash | vision + ניתוח עמוק |
-| chart_analyst_session.py | smart | gemini-3.5-flash | המשך תחקיר עם היסטוריה |
-| short_term.py | mid | gemini-2.5-flash | 6 חוקים + vision |
-| short_term_session | mid | gemini-2.5-flash | המשך תחקיר סווינג |
-| long_term.py | smart | gemini-3.5-flash | ניתוח מבני |
-| portfolio.py | mid | gemini-2.5-flash | חישובים |
+| router.py | lite | gemini-3.1-flash-lite | 8192 |
+| chart_analyst.py | smart | gemini-3.5-flash | 8192 |
+| short_term.py | mid | gemini-2.5-flash | 8192 |
+| long_term.py | smart | gemini-3.5-flash | 8192 |
+| portfolio.py | mid | gemini-2.5-flash | 8192 |
 
 ---
 
 ## API Endpoints
 
-| Method | Path | תפקיד |
-|---|---|---|
-| GET | /api/positions | פוזיציות פתוחות + P&L מחושב |
-| GET | /api/watchlist | רשימת מעקב |
-| GET | /api/summary | 4 KPIs: book value, P&L, count, cash |
-| GET | /api/advice | המלצה אחרונה מ-portfolio_advice |
-| POST | /api/sync | רענון yfinance + audit |
-| POST | /api/chat | הודעת צ'אט → SSE stream (דרך router) |
-| POST | /api/chat/image | גרף TradingView → chart_analyst / short_term → SSE |
-| POST | /api/chat/session | המשך תחקיר פעיל — chart_analyst / short_term |
-| POST | /api/watchlist/{symbol}/dismiss | ביטול התראה |
-| POST | /api/watchlist/{symbol}/investigate | פתיחת תחקור |
-| POST | /api/excel | העלאת קובץ בנק |
-| POST | /webhook | TradingView alerts |
+| Method | Path | תפקיד | סטטוס |
+|---|---|---|---|
+| GET | /api/positions | פוזיציות + P&L | ✅ |
+| GET | /api/watchlist | רשימת מעקב | ✅ |
+| GET | /api/summary | 4 KPIs | ✅ |
+| GET | /api/advice | המלצה אחרונה | ✅ |
+| POST | /api/sync | רענון yfinance | stub |
+| POST | /api/chat | צ'אט → SSE | ✅ |
+| POST | /api/chat/image | גרף → short_term / chart_analyst | ✅ |
+| POST | /api/chat/session | המשך תחקיר | ✅ |
+| POST | /api/watchlist/add | שמירת ניתוח ל-watchlist | ✅ |
+| POST | /api/watchlist/{symbol}/dismiss | ביטול התראה | ✅ |
+| POST | /api/excel | העלאת קובץ בנק | ⬜ |
+| POST | /webhook | TradingView alerts | ⬜ |
 
 ---
 
-## ארכיטקטורת Session (תחקיר פעיל)
+## ארכיטקטורת Session
 
 ```
-הודעה ראשונה (טקסט/תמונה)
-    ↓
-router.py — confidence ≥ 0.85 → סוכן (chart_analyst / short_term)
-    ↓
-תוצאה עם pending_watchlist
-    ↓
-app.js פותח _session { agent, context, history }
-    ↓ (באנר ירוק "תחקיר פעיל")
-כל הודעה/תמונה הבאה → /api/chat/session (עוקף router)
-    ↓
-chart_analyst_session.analyze_followup   (agent=chart_analyst)
-short_term.analyze_st_followup           (agent=short_term)
-    ↓
-סיום: "לא" / כפתור "סיום תחקיר" → session_closed → חזרה ל-router
+גרף + תזה → /api/chat/image
+    ↓ router → short_term
+    ↓ analyze_short_term() — 6 חוקים + תיקוף תזה + סטופ טכני
+    ↓ pending_watchlist
+    ↓ app.js: _openSession() + _updateChips()
+        ── צ'יפים: [💾 הוסף ל-Watchlist 🔒]  [✕ סיום תחקיר]
+    ↓ ניתוח מלא מגיע → _updateChips() מפעיל "הוסף"
+        ── צ'יפים: [💾 הוסף ל-Watchlist ✅]  [✕ סיום תחקיר]
+    ↓ לחיצה → addToWatchlist() → POST /api/watchlist/add → DB
+    ↓ loadAll() + _closeSession()
+        ── צ'יפים: [עדכן סטופים]  [מצב התיק]  [הצג פוזיציות]
 ```
 
-### Implicit Caching
-כל בקשת session שולחת את הגרפים בסדר קבוע בתחילת ה-contents:
-`[תמונות session] → [היסטוריה] → [הודעה נוכחית]`
-Gemini מזהה את החלק הקבוע אוטומטית ומחייב רבע מחיר עליו.
-
-### מצבי session ב-app.js
-| מצב | תיאור |
-|---|---|
-| `_session = null` | אין תחקיר, router פעיל |
-| `_session.pendingResult` | ניתוח מלא, ממתין לאישור כן/לא |
-| `session_active: true` | תחקיר ממשיך, שאלות נוספות |
-| `session_closed: true` | תחקיר נסגר, חזרה לרגיל |
+### Drill-Down
+```
+ציון לא מספיק → DRILL_DOWN_REQUIRED
+    ↓ session_active=True — ממתין לגרף נוסף
+    ↓ גרף נוסף → analyze_st_followup() עם session_images מעודכן
+    ↓ ניתוח מלא → pending_watchlist → כפתור "הוסף" מופעל
+```
 
 ---
 
-## ארכיטקטורת Router (דינמי)
+## חוקי short_term (guardrails)
 
-- `registry.py` — רשימת סוכנים פעילים עם metadata
-- `router.py` — בונה prompt מה-registry בזמן ריצה
-- `confidence < 0.85` → מחזיר `CLARIFY` + שאלה למשתמש
-- `has_image=True` → router יודע שיש תמונה, מעדיף סוכנים התומכים ב-vision
-- להוסיף סוכן: שורה אחת ב-`registry.py`, router מתעדכן אוטומטית
-
----
-
-## חוקי סוכנים (guardrails)
-
-### כלל על לכל הסוכנים:
-1. תמיד עברית מקצועית
-2. כל פעולת DB מודפסת עם ה-SQL
-3. לא מנחשים — עוצרים ושואלים
-
-### router:
-- מקבל הודעה + has_image → מחזיר JSON: `{"agent": "...", "context": "...", "confidence": 0.0-1.0}`
-- confidence < 0.85 → `{"agent": "CLARIFY", "question": "..."}`
-
-### chart_analyst:
-- חוק 1: התראת מחיר בלבד, לא Buy Stop
-- חוק 2: סטופ = 1.5 × ATR מתחת לנקודת כשל
-- חוק 3: מתחת MA_150 = HIGH RISK
-- חוק 4: גרף גרוע → NEED_BETTER_CHART
-- חוק 5: 4 שדות חובה לפני שמירה ל-watchlist
-
-### short_term (6 חוקי מיכה):
+### 6 חוקי מיכה:
 1. מיקום ביחס ל-SMA20
 2. כיוון SMA20 בשבוע האחרון
 3. נרות היפוך (Hammer, Doji, Engulfing)
 4. נרות מומנטום (Marubozu)
 5. אימות ווליום מול ממוצע 20 יום
 6. פערים (Gaps) + CCI(14)
-- guardrails זהים ל-chart_analyst: ATR stop, HIGH RISK, 4 שדות חובה
 
-### long_term:
-- מבנה שוק, תמיכות, התנגדויות
-- חוק 1%: סיכון > 1% מהון → פוסל עסקה
+### תיקוף תזה:
+- ציטוט מדויק של תזת המשתמש
+- ✅ מאשש / ⚠️ חלקי / ❌ סותר + ראיות מהגרף
+- טריגר מתזת המשתמש — אסור לשנות בשקט
 
-### portfolio:
-- Ratchet Guardrail: סטופ רק לכיוון שמקטין סיכון
-- לא מעדכן DB אוטומטית — ממליץ בלבד
+### סטופ טכני:
+- שלב 1: שפל נר הפריצה / תמיכה קרובה
+- שלב 2: צמוד מדי (< 0.5×ATR) → כרית 0.5–1×ATR
+- שלב 3: ציין מקור בתשובה
+
+### Drill-Down triggers:
+- REQUEST_65M: Doji/Pinbar על התנגדות, ציון 6/6 עם חוק ⚠️
+- REQUEST_AVWAP: Gap פתוח + דשדוש
+- REQUEST_RS_CONTEXT: תבנית ניטרלית + תזה חיובית
 
 ---
 
@@ -241,11 +197,12 @@ Gemini מזהה את החלק הקבוע אוטומטית ומחייב רבע מ
 | 2 | main.py + GET endpoints | 🔒 LOCKED |
 | 3 | static/index.html + style.css | 🔒 LOCKED |
 | 4 | static/app.js (tables + KPIs) | 🔒 LOCKED |
-| 5 | agents/client.py | 🔒 LOCKED |
+| 5 | agents/client.py + client_history.py | 🔒 LOCKED |
 | 6 | agents/registry.py + agents/router.py | 🔒 LOCKED |
 | 7 | POST /api/chat + SSE (routes/chat.py) | 🔒 LOCKED |
-| 8 | agents/chart_analyst.py + chart_analyst_session.py + chart_analyst_contents.py + routes/image_session.py + routes/session.py | 🔒 LOCKED |
-| 9 | agents/short_term.py + short_term_prompt.py + short_term_contents.py + עדכון routes/chat.py + image_session.py + session.py | ✅ DONE |
+| 8 | chart_analyst + session + contents + routes | 🔒 LOCKED |
+| 9 | short_term + prompt + parser + contents + drill_down | 🔒 LOCKED |
+| 9b | watchlist chips UI + /api/watchlist/add | 🔒 LOCKED |
 | 10 | agents/long_term.py + long_term_prompt.py | ⬜ TODO |
 | 11 | agents/portfolio.py + portfolio_prompt.py | ⬜ TODO |
 | 12 | services/market_data.py + POST /api/sync | ⬜ TODO |

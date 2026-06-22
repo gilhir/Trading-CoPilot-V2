@@ -37,7 +37,7 @@ async function loadAll() {
 
 /* ── header ── */
 function renderHeader(s) {
-  const bookILS = s.book_value * 3.7; /* rough ILS conversion */
+  const bookILS = s.book_value * 3.7;
   $('hdr-total').textContent = '₪' + fmt(bookILS, 0);
   const pct = s.pnl_percent;
   const badge = $('hdr-pct');
@@ -56,7 +56,7 @@ function renderKPIs(s) {
   pctEl.textContent = pnlSign(s.pnl_percent) + fmt(Math.abs(s.pnl_percent), 2) + '%';
   pctEl.style.color = pnlColor(s.pnl_percent);
   $('kpi-count').textContent = s.position_count;
-  $('kpi-cash').textContent = '₪716,896'; /* from excel parser in later step */
+  $('kpi-cash').textContent = '₪716,896';
 }
 
 /* ── positions ── */
@@ -66,30 +66,24 @@ function renderPositions(positions) {
 
   const tbody = $('positions-body');
   tbody.innerHTML = '';
-
   let totalValue = 0, totalPnl = 0;
 
   for (const p of positions) {
     totalValue += p.holding_value || 0;
     totalPnl   += p.pnl_amount   || 0;
-
     const isSwing = p.trade_type === 'SHORT_TERM';
     const typeLabel = isSwing ? 'סווינג' : 'טווח ארוך';
     const typeColor = isSwing ? '#c9a3e8' : '#7fb5e6';
     const typeBg    = isSwing ? 'rgba(176,130,214,0.13)' : 'rgba(110,165,224,0.13)';
-
     const pc = pnlColor(p.pnl_amount);
     const dynStop = p.dynamic_stop_loss > 0 ? fmtUSD(p.dynamic_stop_loss) : '—';
     const stopDist = p.stop_distance_pct != null ? p.stop_distance_pct.toFixed(1) + '% מרחק' : '—';
-
-    /* risk classification */
     let riskLabel = 'יציב', riskColor = '#7d8893', riskBg = 'rgba(255,255,255,0.05)';
     if (p.pnl_percent < -20) {
       riskLabel = 'סיכון גבוה'; riskColor = '#e5746c'; riskBg = 'rgba(229,116,108,0.13)';
     } else if (p.dynamic_stop_loss === 0) {
       riskLabel = 'ללא סטופ'; riskColor = '#e0b257'; riskBg = 'rgba(224,178,87,0.13)';
     }
-
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>
@@ -111,22 +105,16 @@ function renderPositions(positions) {
         <div class="stop-val">${dynStop}</div>
         <div class="stop-dist">${stopDist}</div>
       </td>
-      <td>
-        <span class="risk-badge" style="color:${riskColor};background:${riskBg}">${riskLabel}</span>
-      </td>`;
+      <td><span class="risk-badge" style="color:${riskColor};background:${riskBg}">${riskLabel}</span></td>`;
     tbody.appendChild(tr);
   }
 
-  /* footer totals */
   const totalPct  = totalValue > 0 ? ((totalValue - (totalValue - totalPnl)) / (totalValue - totalPnl) * 100) : 0;
   const tfoot = $('positions-foot');
   tfoot.innerHTML = `<tr>
-    <td>סה״כ ספר המסחר</td>
-    <td></td><td></td><td></td>
+    <td>סה״כ ספר המסחר</td><td></td><td></td><td></td>
     <td class="ltr mono" style="font-weight:700">$${fmt(totalValue,0)}</td>
-    <td class="ltr">
-      <span class="pnl-amt" style="color:${pnlColor(totalPnl)}">${pnlSign(totalPnl)}$${fmt(Math.abs(totalPnl),0)}</span>
-    </td>
+    <td class="ltr"><span class="pnl-amt" style="color:${pnlColor(totalPnl)}">${pnlSign(totalPnl)}$${fmt(Math.abs(totalPnl),0)}</span></td>
     <td></td><td></td>
   </tr>`;
 }
@@ -136,12 +124,10 @@ function renderWatchlist(items) {
   $('watch-count-label').textContent = items.length + ' ניירות';
   const container = $('watchlist-body');
   container.innerHTML = '';
-
   if (!items.length) {
     container.innerHTML = '<div class="loading-row">רשימת המעקב ריקה.</div>';
     return;
   }
-
   for (const w of items) {
     const triggered = w.current_status.includes('Triggered');
     const statusLabel = triggered ? 'הופעלה' : 'ממתין';
@@ -149,7 +135,6 @@ function renderWatchlist(items) {
     const statusBg    = triggered ? 'rgba(224,178,87,0.15)' : 'rgba(255,255,255,0.05)';
     const cardBg      = triggered ? 'rgba(224,178,87,0.06)' : '#1a1e24';
     const cardBorder  = triggered ? 'rgba(224,178,87,0.3)' : 'rgba(255,255,255,0.06)';
-
     const div = document.createElement('div');
     div.className = 'watch-card';
     div.style.background = cardBg;
@@ -175,11 +160,9 @@ function renderAlerts(watchlist) {
   const triggered = watchlist.filter(w => w.current_status.includes('Triggered'));
   const container = $('alerts-container');
   container.innerHTML = '';
-
   for (const w of triggered) {
     const ts = w.activation_trigger_time || '—';
     const price = w.activation_trigger_price ? fmtUSD(w.activation_trigger_price) : '—';
-
     const div = document.createElement('div');
     div.className = 'alert-card';
     div.innerHTML = `
@@ -234,9 +217,9 @@ async function syncMarket() {
   }
 }
 
-/* ── alert actions (stubs for now) ── */
+/* ── alert actions ── */
 async function investigate(symbol) {
-  alert('מצב תחקור: ' + symbol + ' — יחובר לצ\'אט בשלב הבא');
+  alert('מצב תחקיר: ' + symbol + ' — יחובר לצ\'אט בשלב הבא');
 }
 
 async function dismissAlert(symbol, mode) {
@@ -262,13 +245,84 @@ loadAll();
 /* ── Chat ── */
 let chatHistory = [];
 
-// ── Session state (תחקיר פעיל) ──────────────────────────────────
+/* ── Session state ── */
 let _session = null;
-// null = אין תחקיר
-// { agent, context, history:[{role,text,images:[base64]}], pendingResult }
+
+/* ── chip definitions ── */
+const _CHIPS_DEFAULT = [
+  { label: 'עדכן סטופים כללי', action: () => sendChip('עדכן סטופים כללי') },
+  { label: 'מצב התיק',          action: () => sendChip('מה המצב של התיק שלי') },
+  { label: 'הצג פוזיציות',      action: () => sendChip('הצג פוזיציות') },
+];
+
+/* ── עדכון צ'יפים לפי מצב ── */
+function _updateChips() {
+  const container = $('chat-chips-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (!_session) {
+    _CHIPS_DEFAULT.forEach(c => {
+      const btn = document.createElement('button');
+      btn.className = 'chip';
+      btn.textContent = c.label;
+      btn.onclick = c.action;
+      container.appendChild(btn);
+    });
+    return;
+  }
+
+  // session פעיל — בדיקת pendingResult
+  const hasResult = !!(_session.pendingResult &&
+    _session.pendingResult.symbol &&
+    _session.pendingResult.trigger_price_zone);
+
+  const btnAdd = document.createElement('button');
+  btnAdd.className = 'chip chip-accent';
+  btnAdd.id = 'btn-add-watchlist';
+  btnAdd.textContent = '💾 הוסף ל-Watchlist';
+  btnAdd.disabled = !hasResult;
+  btnAdd.onclick = addToWatchlist;
+  container.appendChild(btnAdd);
+
+  const btnEnd = document.createElement('button');
+  btnEnd.className = 'chip chip-danger';
+  btnEnd.textContent = '✕ סיום תחקיר';
+  btnEnd.onclick = _closeSession;
+  container.appendChild(btnEnd);
+}
+
+/* ── שמירה ל-watchlist ── */
+async function addToWatchlist() {
+  if (!_session || !_session.pendingResult) return;
+
+  const btn = $('btn-add-watchlist');
+  if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
+
+  try {
+    const res = await fetch('/api/watchlist/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(_session.pendingResult),
+    });
+    const data = await res.json();
+
+    if (data.ok) {
+      addBubble(`✅ ${_session.pendingResult.symbol} נוסף לרשימת המעקב`, 'assistant');
+      await loadAll();
+      _closeSession();
+    } else {
+      addBubble(`⚠️ שגיאה: ${data.message || 'לא ניתן לשמור'}`, 'assistant');
+      if (btn) { btn.disabled = false; btn.textContent = '💾 הוסף ל-Watchlist'; }
+    }
+  } catch (e) {
+    addBubble('⚠️ שגיאת חיבור בשמירה ל-watchlist', 'assistant');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 הוסף ל-Watchlist'; }
+  }
+}
 
 function addBubble(text, role) {
-  const container = document.getElementById('chat-messages');
+  const container = $('chat-messages');
   const div = document.createElement('div');
   div.className = `bubble bubble-${role}`;
   div.textContent = text;
@@ -278,7 +332,7 @@ function addBubble(text, role) {
 }
 
 function addAgentBadge(agent, context) {
-  const container = document.getElementById('chat-messages');
+  const container = $('chat-messages');
   const div = document.createElement('div');
   div.className = 'bubble bubble-agent';
   const labels = {
@@ -288,19 +342,19 @@ function addAgentBadge(agent, context) {
   };
   div.textContent = (labels[agent] || agent) + ' · ' + context;
   container.appendChild(div);
-  const badge = document.getElementById('chat-agent-badge');
+  const badge = $('chat-agent-badge');
   if (badge) badge.textContent = labels[agent] || agent;
 }
 
 async function sendMessage() {
-  const input = document.getElementById('chat-input');
+  const input = $('chat-input');
   const text  = (input.value || '').trim();
   const pendingImage = window._pendingImage || null;
   if (!text && !pendingImage) return;
 
   input.value = '';
   if (pendingImage) {
-    window._lastSentImage = pendingImage.data;  // שמור לשימוש ב-session
+    window._lastSentImage = pendingImage.data;
     window._pendingImage = null;
   }
 
@@ -312,10 +366,8 @@ async function sendMessage() {
   const assistantBubble = addBubble('', 'assistant');
   let fullText = '';
 
-  // ── session פעיל → עוקפים router ──────────────────────────────
   if (_session) {
     const newImages = pendingImage ? [pendingImage.data] : [];
-    // צבור תמונות חדשות ל-session_images
     if (newImages.length > 0) {
       _session.session_images = (_session.session_images || []).concat(newImages);
     }
@@ -334,10 +386,8 @@ async function sendMessage() {
     return;
   }
 
-  // ── אין session → routing רגיל ────────────────────────────────
   if (text) chatHistory.push({ role: 'user', text: displayText });
 
-  // בחירת endpoint: תמונה → /api/chat/image, טקסט → /api/chat
   const endpoint = pendingImage ? '/api/chat/image' : '/api/chat';
   const payload  = pendingImage
     ? { message: text || '', image_data: pendingImage.data, image_mime: pendingImage.mime, history: chatHistory.slice(-10) }
@@ -349,14 +399,12 @@ async function sendMessage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-
     const reader  = res.body.getReader();
     const decoder = new TextDecoder();
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
       const lines = decoder.decode(value).split('\n');
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
@@ -364,23 +412,19 @@ async function sendMessage() {
           const data = JSON.parse(line.slice(6));
           if (data.agent && !data.clarify) addAgentBadge(data.agent, data.context || '');
           if (data.clarify) {
-            // הסוכן לא בטוח — מציג שאלה, שומר תמונה אם יש
             assistantBubble.remove();
             addBubble('🤔 ' + data.text, 'assistant');
-            // keep_image=true אומר שהתמונה תישמר עד לתשובה הבאה
           }
           if (data.text && !data.clarify) { fullText += data.text; assistantBubble.textContent = fullText; }
           if (data.error) { assistantBubble.textContent = '⚠️ שגיאה: ' + data.error; }
-          if (data.done)  {
+          if (data.done) {
             if (!data.keep_image) window._pendingImage = null;
             if (fullText) chatHistory.push({ role: 'assistant', text: fullText });
-            // פתח session אם יש pending_watchlist
             if (data.pending_watchlist && data.agent) {
-              // שמור את התמונה המקורית ב-session
               const firstImg = window._lastSentImage || null;
               _openSession(data.agent, data.context || 'SHORT_TERM', data.pending_watchlist, firstImg);
             }
-            document.getElementById('chat-messages').scrollTop = 99999;
+            $('chat-messages').scrollTop = 99999;
           }
         } catch {}
       }
@@ -389,23 +433,23 @@ async function sendMessage() {
     assistantBubble.textContent = '⚠️ שגיאת חיבור';
   } finally {
     btn.disabled = false;
-    document.getElementById('chat-input').focus();
+    $('chat-input').focus();
   }
 }
 
 function sendChip(text) {
-  document.getElementById('chat-input').value = text;
+  $('chat-input').value = text;
   sendMessage();
 }
 
-// ── welcome message ──
 window.addEventListener('load', () => {
+  _updateChips();   // ← אתחול צ'יפים רגילים
   setTimeout(() => {
     addBubble('שלום! אני עוזר המסחר שלך.\nאפשר לשאול שאלות על התיק, לבקש ניתוח טכני, לעדכן עסקאות, או להעלות גרף מ-TradingView.', 'assistant');
   }, 600);
 });
 
-/* ── Paste from clipboard (Cmd+V) ── */
+/* ── Paste from clipboard ── */
 document.addEventListener('paste', (e) => {
   const items = e.clipboardData?.items;
   if (!items) return;
@@ -424,35 +468,34 @@ document.addEventListener('paste', (e) => {
   }
 });
 
-// ── session helpers ──────────────────────────────────────────────
-
+/* ── session helpers ── */
 function _openSession(agent, context, pendingResult, firstImage = null) {
-  // session_images צובר את כל הגרפים שנשלחו בתחקיר
   const images = firstImage ? [firstImage] : [];
   _session = { agent, context, history: [], pendingResult, session_images: images };
+  _updateChips();          // ← עדכון צ'יפים ל-session
   _renderSessionBanner(true);
   console.log(`[session] opened: ${agent} / ${context}`);
 }
 
 function _closeSession() {
   _session = null;
+  _updateChips();          // ← חזרה לצ'יפים רגילים
   _renderSessionBanner(false);
   console.log('[session] closed');
 }
 
 function _renderSessionBanner(active) {
-  let banner = document.getElementById('session-banner');
+  let banner = $('session-banner');
   if (!banner) {
     banner = document.createElement('div');
     banner.id = 'session-banner';
     banner.style.cssText = 'padding:6px 14px;background:rgba(84,201,138,0.12);color:#54c98a;font-size:12px;display:flex;justify-content:space-between;align-items:center;';
-    const chatBox = document.getElementById('chat-messages');
+    const chatBox = $('chat-messages');
     chatBox.parentNode.insertBefore(banner, chatBox);
   }
   if (active && _session) {
     const labels = { chart_analyst: '📊 ניתוח גרף', short_term: '⚡ סווינג', long_term: '📈 טווח ארוך' };
-    banner.innerHTML = `<span>🔍 תחקיר פעיל — ${labels[_session.agent] || _session.agent}</span>
-      <button onclick="_closeSession()" style="background:none;border:1px solid #54c98a;color:#54c98a;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;">סיום תחקיר</button>`;
+    banner.innerHTML = `<span>🔍 תחקיר פעיל — ${labels[_session.agent] || _session.agent}</span>`;
     banner.style.display = 'flex';
   } else {
     banner.style.display = 'none';
@@ -483,7 +526,7 @@ async function _streamRequest(endpoint, payload, bubble, onEvent) {
         } catch {}
       }
     }
-    document.getElementById('chat-messages').scrollTop = 99999;
+    $('chat-messages').scrollTop = 99999;
   } catch (e) {
     bubble.textContent = '⚠️ שגיאת חיבור';
   }
@@ -498,10 +541,16 @@ function _handleSessionEvent(data, fullText, setFullText) {
     return;
   }
 
-  if (data.pending_watchlist && data.session_active) {
-    if (_session) _session.pendingResult = data.pending_watchlist;
-    chatHistory.push({ role: 'assistant', text: fullText });
-    return;
+  // pending_watchlist הגיע — מפעיל כפתור "הוסף"
+  if (data.pending_watchlist) {
+    if (_session) {
+      _session.pendingResult = data.pending_watchlist;
+      _updateChips();      // ← מפעיל את כפתור "הוסף"
+    }
+    if (data.session_closed) {
+      chatHistory.push({ role: 'assistant', text: fullText });
+      return;
+    }
   }
 
   if (data.done && data.session_active) {
