@@ -262,6 +262,11 @@ loadAll();
 /* ── Chat ── */
 let chatHistory = [];
 
+// ── Session state (תחקיר פעיל) ──────────────────────────────────
+let _session = null;
+// null = אין תחקיר
+// { agent, context, history:[{role,text,images:[base64]}], pendingResult }
+
 function addBubble(text, role) {
   const container = document.getElementById('chat-messages');
   const div = document.createElement('div');
@@ -294,18 +299,43 @@ async function sendMessage() {
   if (!text && !pendingImage) return;
 
   input.value = '';
-  if (pendingImage) window._pendingImage = null;
+  if (pendingImage) {
+    window._lastSentImage = pendingImage.data;  // שמור לשימוש ב-session
+    window._pendingImage = null;
+  }
 
   const displayText = text || '📊 שולח גרף לניתוח...';
   addBubble(displayText, 'user');
-  if (text) chatHistory.push({ role: 'user', text: displayText });
 
   const btn = document.querySelector('.send-btn');
   btn.disabled = true;
-
-  // בועת תשובה ריקה — נמלא אותה מה-stream
   const assistantBubble = addBubble('', 'assistant');
   let fullText = '';
+
+  // ── session פעיל → עוקפים router ──────────────────────────────
+  if (_session) {
+    const newImages = pendingImage ? [pendingImage.data] : [];
+    // צבור תמונות חדשות ל-session_images
+    if (newImages.length > 0) {
+      _session.session_images = (_session.session_images || []).concat(newImages);
+    }
+    _session.history.push({ role: 'user', text: displayText });
+
+    const payload = {
+      agent:          _session.agent,
+      context:        _session.context,
+      message:        text,
+      history:        _session.history.slice(-20),
+      session_images: _session.session_images || [],
+    };
+    await _streamRequest('/api/chat/session', payload, assistantBubble,
+      (data) => _handleSessionEvent(data, fullText, (t) => { fullText = t; }));
+    btn.disabled = false;
+    return;
+  }
+
+  // ── אין session → routing רגיל ────────────────────────────────
+  if (text) chatHistory.push({ role: 'user', text: displayText });
 
   // בחירת endpoint: תמונה → /api/chat/image, טקסט → /api/chat
   const endpoint = pendingImage ? '/api/chat/image' : '/api/chat';
@@ -344,6 +374,12 @@ async function sendMessage() {
           if (data.done)  {
             if (!data.keep_image) window._pendingImage = null;
             if (fullText) chatHistory.push({ role: 'assistant', text: fullText });
+            // פתח session אם יש pending_watchlist
+            if (data.pending_watchlist && data.agent) {
+              // שמור את התמונה המקורית ב-session
+              const firstImg = window._lastSentImage || null;
+              _openSession(data.agent, data.context || 'SHORT_TERM', data.pending_watchlist, firstImg);
+            }
             document.getElementById('chat-messages').scrollTop = 99999;
           }
         } catch {}
@@ -387,3 +423,89 @@ document.addEventListener('paste', (e) => {
     }
   }
 });
+
+// ── session helpers ──────────────────────────────────────────────
+
+function _openSession(agent, context, pendingResult, firstImage = null) {
+  // session_images צובר את כל הגרפים שנשלחו בתחקיר
+  const images = firstImage ? [firstImage] : [];
+  _session = { agent, context, history: [], pendingResult, session_images: images };
+  _renderSessionBanner(true);
+  console.log(`[session] opened: ${agent} / ${context}`);
+}
+
+function _closeSession() {
+  _session = null;
+  _renderSessionBanner(false);
+  console.log('[session] closed');
+}
+
+function _renderSessionBanner(active) {
+  let banner = document.getElementById('session-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'session-banner';
+    banner.style.cssText = 'padding:6px 14px;background:rgba(84,201,138,0.12);color:#54c98a;font-size:12px;display:flex;justify-content:space-between;align-items:center;';
+    const chatBox = document.getElementById('chat-messages');
+    chatBox.parentNode.insertBefore(banner, chatBox);
+  }
+  if (active && _session) {
+    const labels = { chart_analyst: '📊 ניתוח גרף', short_term: '⚡ סווינג', long_term: '📈 טווח ארוך' };
+    banner.innerHTML = `<span>🔍 תחקיר פעיל — ${labels[_session.agent] || _session.agent}</span>
+      <button onclick="_closeSession()" style="background:none;border:1px solid #54c98a;color:#54c98a;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;">סיום תחקיר</button>`;
+    banner.style.display = 'flex';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
+async function _streamRequest(endpoint, payload, bubble, onEvent) {
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText  = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const lines = decoder.decode(value).split('\n');
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.text && !data.clarify) { fullText += data.text; bubble.textContent = fullText; }
+          onEvent(data, fullText, (t) => { fullText = t; });
+        } catch {}
+      }
+    }
+    document.getElementById('chat-messages').scrollTop = 99999;
+  } catch (e) {
+    bubble.textContent = '⚠️ שגיאת חיבור';
+  }
+}
+
+function _handleSessionEvent(data, fullText, setFullText) {
+  if (data.agent && !data.clarify) addAgentBadge(data.agent, data.context || '');
+
+  if (data.session_closed) {
+    _closeSession();
+    chatHistory.push({ role: 'assistant', text: fullText });
+    return;
+  }
+
+  if (data.pending_watchlist && data.session_active) {
+    if (_session) _session.pendingResult = data.pending_watchlist;
+    chatHistory.push({ role: 'assistant', text: fullText });
+    return;
+  }
+
+  if (data.done && data.session_active) {
+    if (_session) _session.history.push({ role: 'assistant', text: fullText });
+    return;
+  }
+}
