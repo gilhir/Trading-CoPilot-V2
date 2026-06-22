@@ -27,28 +27,39 @@
 
 ```
 copilot_v2/
-├── SPEC.md                  # ← המסמך הזה
-├── main.py                  # FastAPI app, routes בלבד (אין לוגיקה)
-├── database.py              # כל גישה ל-SQLite (מועתק + מנוקה)
+├── SPEC.md                          # ← המסמך הזה
+├── main.py                          # FastAPI app + router imports (אין לוגיקה)
+├── database.py                      # כל גישה ל-SQLite
 │
 ├── agents/
 │   ├── __init__.py
-│   ├── client.py            # אתחול Gemini client + retry logic
-│   ├── router.py            # Supervisor: intent detection בלבד
-│   ├── chart_analyst.py     # ניתוח גרפים (vision)
-│   ├── short_term.py        # 6 חוקי מיכה
-│   ├── long_term.py         # ניתוח מבני, חוק 1%
-│   └── portfolio.py         # EOD audit, stop review
+│   ├── client.py                    # אתחול Gemini client + retry logic
+│   ├── registry.py                  # רשימת סוכנים פעילים — דינמי
+│   ├── router.py                    # Supervisor: intent detection + confidence
+│   ├── chart_analyst.py             # ניתוח גרף ראשוני (vision)
+│   ├── chart_analyst_session.py     # המשך תחקיר chart_analyst
+│   ├── chart_analyst_contents.py    # בניית contents לGemini (implicit caching)
+│   ├── short_term.py                # ניתוח סווינג: analyze_short_term + analyze_st_followup
+│   ├── short_term_prompt.py         # system prompt + 6 חוקי מיכה
+│   ├── short_term_contents.py       # build_st_contents — עוטף chart_analyst_contents
+│   ├── long_term.py                 # ניתוח מבני, חוק 1%
+│   └── portfolio.py                 # EOD audit, stop review
+│
+├── routes/
+│   ├── __init__.py
+│   ├── chat.py                      # POST /api/chat — short_term מחובר לסוכן ייעודי
+│   ├── image_session.py             # POST /api/chat/image — chart_analyst + short_term
+│   └── session.py                   # POST /api/chat/session — chart_analyst + short_term
 │
 ├── services/
-│   ├── market_data.py       # yfinance wrapper
-│   ├── excel_parser.py      # המרת אקסל בנק → DB
-│   └── webhook.py           # TradingView handler
+│   ├── market_data.py               # yfinance wrapper
+│   ├── excel_parser.py              # המרת אקסל בנק → DB
+│   └── webhook.py                   # TradingView handler
 │
 ├── static/
-│   ├── index.html           # Dashboard ראשי
-│   ├── app.js               # fetch + SSE + UI logic
-│   └── style.css            # עיצוב מה-handoff
+│   ├── index.html                   # Dashboard ראשי
+│   ├── app.js                       # fetch + SSE + UI + session logic
+│   └── style.css                    # עיצוב
 │
 └── tests/
     ├── test_database.py
@@ -110,13 +121,15 @@ copilot_v2/
 
 ## מודלים לפי סוכן
 
-| סוכן | מודל | הסיבה |
-|---|---|---|
-| router.py | gemini-2.5-flash | ניתוב בלבד, זול, מהיר |
-| chart_analyst.py | gemini-2.5-pro | vision + ניתוח עמוק |
-| short_term.py | gemini-2.5-flash | 6 חוקים קבועים, פחות צריך pro |
-| long_term.py | gemini-2.5-pro | ניתוח מבני, שווה להשקיע |
-| portfolio.py | gemini-2.5-flash | חישובים, לא vision בד"כ |
+| סוכן | model_key | מודל בפועל | הסיבה |
+|---|---|---|---|
+| router.py | lite | gemini-3.1-flash-lite | ניתוב בלבד, זול, מהיר |
+| chart_analyst.py | smart | gemini-3.5-flash | vision + ניתוח עמוק |
+| chart_analyst_session.py | smart | gemini-3.5-flash | המשך תחקיר עם היסטוריה |
+| short_term.py | mid | gemini-2.5-flash | 6 חוקים + vision |
+| short_term_session | mid | gemini-2.5-flash | המשך תחקיר סווינג |
+| long_term.py | smart | gemini-3.5-flash | ניתוח מבני |
+| portfolio.py | mid | gemini-2.5-flash | חישובים |
 
 ---
 
@@ -129,8 +142,9 @@ copilot_v2/
 | GET | /api/summary | 4 KPIs: book value, P&L, count, cash |
 | GET | /api/advice | המלצה אחרונה מ-portfolio_advice |
 | POST | /api/sync | רענון yfinance + audit |
-| POST | /api/chat | הודעת צ'אט → SSE stream |
-| POST | /api/chat/image | העלאת גרף TradingView |
+| POST | /api/chat | הודעת צ'אט → SSE stream (דרך router) |
+| POST | /api/chat/image | גרף TradingView → chart_analyst / short_term → SSE |
+| POST | /api/chat/session | המשך תחקיר פעיל — chart_analyst / short_term |
 | POST | /api/watchlist/{symbol}/dismiss | ביטול התראה |
 | POST | /api/watchlist/{symbol}/investigate | פתיחת תחקור |
 | POST | /api/excel | העלאת קובץ בנק |
@@ -138,31 +152,76 @@ copilot_v2/
 
 ---
 
-## חוקי סוכנים (guardrails) — לא משנים אותם
+## ארכיטקטורת Session (תחקיר פעיל)
+
+```
+הודעה ראשונה (טקסט/תמונה)
+    ↓
+router.py — confidence ≥ 0.85 → סוכן (chart_analyst / short_term)
+    ↓
+תוצאה עם pending_watchlist
+    ↓
+app.js פותח _session { agent, context, history }
+    ↓ (באנר ירוק "תחקיר פעיל")
+כל הודעה/תמונה הבאה → /api/chat/session (עוקף router)
+    ↓
+chart_analyst_session.analyze_followup   (agent=chart_analyst)
+short_term.analyze_st_followup           (agent=short_term)
+    ↓
+סיום: "לא" / כפתור "סיום תחקיר" → session_closed → חזרה ל-router
+```
+
+### Implicit Caching
+כל בקשת session שולחת את הגרפים בסדר קבוע בתחילת ה-contents:
+`[תמונות session] → [היסטוריה] → [הודעה נוכחית]`
+Gemini מזהה את החלק הקבוע אוטומטית ומחייב רבע מחיר עליו.
+
+### מצבי session ב-app.js
+| מצב | תיאור |
+|---|---|
+| `_session = null` | אין תחקיר, router פעיל |
+| `_session.pendingResult` | ניתוח מלא, ממתין לאישור כן/לא |
+| `session_active: true` | תחקיר ממשיך, שאלות נוספות |
+| `session_closed: true` | תחקיר נסגר, חזרה לרגיל |
+
+---
+
+## ארכיטקטורת Router (דינמי)
+
+- `registry.py` — רשימת סוכנים פעילים עם metadata
+- `router.py` — בונה prompt מה-registry בזמן ריצה
+- `confidence < 0.85` → מחזיר `CLARIFY` + שאלה למשתמש
+- `has_image=True` → router יודע שיש תמונה, מעדיף סוכנים התומכים ב-vision
+- להוסיף סוכן: שורה אחת ב-`registry.py`, router מתעדכן אוטומטית
+
+---
+
+## חוקי סוכנים (guardrails)
 
 ### כלל על לכל הסוכנים:
 1. תמיד עברית מקצועית
 2. כל פעולת DB מודפסת עם ה-SQL
 3. לא מנחשים — עוצרים ושואלים
 
-### router בלבד:
-- מקבל הודעה → מחזיר JSON: `{"agent": "chart_analyst", "context": "SHORT_TERM"}`
-- לא מנתח, לא כותב, לא מחשב
+### router:
+- מקבל הודעה + has_image → מחזיר JSON: `{"agent": "...", "context": "...", "confidence": 0.0-1.0}`
+- confidence < 0.85 → `{"agent": "CLARIFY", "question": "..."}`
 
 ### chart_analyst:
 - חוק 1: התראת מחיר בלבד, לא Buy Stop
 - חוק 2: סטופ = 1.5 × ATR מתחת לנקודת כשל
 - חוק 3: מתחת MA_150 = HIGH RISK
-- חוק 4: גרף גרוע → עוצר ומבקש גרף חדש
+- חוק 4: גרף גרוע → NEED_BETTER_CHART
 - חוק 5: 4 שדות חובה לפני שמירה ל-watchlist
 
 ### short_term (6 חוקי מיכה):
 1. מיקום ביחס ל-SMA20
 2. כיוון SMA20 בשבוע האחרון
-3. נרות היפוך (Hammer, Doji)
+3. נרות היפוך (Hammer, Doji, Engulfing)
 4. נרות מומנטום (Marubozu)
 5. אימות ווליום מול ממוצע 20 יום
-6. פערים + CCI(14)
+6. פערים (Gaps) + CCI(14)
+- guardrails זהים ל-chart_analyst: ATR stop, HIGH RISK, 4 שדות חובה
 
 ### long_term:
 - מבנה שוק, תמיכות, התנגדויות
@@ -171,7 +230,6 @@ copilot_v2/
 ### portfolio:
 - Ratchet Guardrail: סטופ רק לכיוון שמקטין סיכון
 - לא מעדכן DB אוטומטית — ממליץ בלבד
-- חוק 1% visual: שינוי > 1% → דורש גרף
 
 ---
 
@@ -179,17 +237,17 @@ copilot_v2/
 
 | שלב | קבצים | מצב |
 |---|---|---|
-| 1 | database.py | ⬜ TODO |
-| 2 | main.py + GET endpoints | ⬜ TODO |
-| 3 | static/index.html + style.css | ⬜ TODO |
-| 4 | static/app.js (tables + KPIs) | ⬜ TODO |
-| 5 | agents/client.py | ⬜ TODO |
-| 6 | agents/router.py | ⬜ TODO |
-| 7 | POST /api/chat + SSE | ⬜ TODO |
-| 8 | agents/chart_analyst.py | ⬜ TODO |
-| 9 | agents/short_term.py | ⬜ TODO |
-| 10 | agents/long_term.py | ⬜ TODO |
-| 11 | agents/portfolio.py | ⬜ TODO |
+| 1 | database.py | 🔒 LOCKED |
+| 2 | main.py + GET endpoints | 🔒 LOCKED |
+| 3 | static/index.html + style.css | 🔒 LOCKED |
+| 4 | static/app.js (tables + KPIs) | 🔒 LOCKED |
+| 5 | agents/client.py | 🔒 LOCKED |
+| 6 | agents/registry.py + agents/router.py | 🔒 LOCKED |
+| 7 | POST /api/chat + SSE (routes/chat.py) | 🔒 LOCKED |
+| 8 | agents/chart_analyst.py + chart_analyst_session.py + chart_analyst_contents.py + routes/image_session.py + routes/session.py | 🔒 LOCKED |
+| 9 | agents/short_term.py + short_term_prompt.py + short_term_contents.py + עדכון routes/chat.py + image_session.py + session.py | ✅ DONE |
+| 10 | agents/long_term.py + long_term_prompt.py | ⬜ TODO |
+| 11 | agents/portfolio.py + portfolio_prompt.py | ⬜ TODO |
 | 12 | services/market_data.py + POST /api/sync | ⬜ TODO |
 | 13 | services/excel_parser.py + POST /api/excel | ⬜ TODO |
 | 14 | services/webhook.py + POST /webhook | ⬜ TODO |
