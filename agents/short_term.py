@@ -30,15 +30,27 @@ def analyze_short_term(
     watchlist_text: str = "",
 ) -> dict:
     """
-    מנתח גרף לפי 6 חוקי מיכה.
-    status: OK | NEED_BETTER_CHART | MISSING_FIELDS | ERROR
+    מנתח גרף לפי 6 חוקי מיכה + מתקף תזת משתמש אם סופקה.
+    status: OK | NEED_BETTER_CHART | MISSING_FIELDS | DRILL_DOWN_REQUIRED | ERROR
     """
     system = build_initial_prompt(positions_text, watchlist_text)
-    user_prompt = (
-        "סוג עסקה: SHORT_TERM (סווינג)\n"
-        + (f"הערות: {extra_context}\n" if extra_context else "")
-        + "נתח את הגרף לפי 6 החוקים. ענה בפורמט שהוגדר."
-    )
+
+    # הגדרת תזה מפורשת — המודל יפעיל בלוק תיקוף
+    if extra_context.strip():
+        thesis_line = f"תזת המשתמש לתיקוף: {extra_context.strip()}\n"
+        action_line = "נתח את הגרף לפי 6 החוקים, תקף את התזה, וענה בפורמט שהוגדר."
+    else:
+        thesis_line = ""
+        action_line = "נתח את הגרף לפי 6 החוקים וענה בפורמט שהוגדר."
+
+    user_prompt = f"סוג עסקה: SHORT_TERM (סווינג)\n{thesis_line}{action_line}"
+
+    # ── לוג מה נשלח למודל ────────────────────────────────────────
+    print(f"[short_term] ── analyze_short_term ──")
+    print(f"[short_term] model=mid | image={len(image_bytes)} bytes")
+    print(f"[short_term] has_thesis={bool(extra_context.strip())}")
+    print(f"[short_term] user_prompt:\n{user_prompt}")
+    print(f"[short_term] system_prompt (ראשון 200 תווים): {system[:200]}...")
 
     try:
         raw = generate(
@@ -48,9 +60,18 @@ def analyze_short_term(
             images=[image_bytes],
         )
     except Exception as e:
+        print(f"[short_term] ❌ generate error: {e}")
         return {"status": "ERROR", "error": str(e)}
 
-    return parse_initial_response(raw)
+    # ── לוג מה חזר מהמודל ────────────────────────────────────────
+    print(f"[short_term] raw response ({len(raw)} תווים):")
+    print(raw[:500])
+    if len(raw) > 500:
+        print(f"... [קוצר, {len(raw)-500} תווים נוספים]")
+
+    result = parse_initial_response(raw)
+    print(f"[short_term] parsed status={result.get('status')} | symbol={result.get('symbol','?')}")
+    return result
 
 
 # ─── המשך תחקיר ──────────────────────────────────────────────────
@@ -64,12 +85,16 @@ def analyze_st_followup(
 ) -> dict:
     """
     ממשיך תחקיר סווינג עם כל הגרפים שנאספו.
-    status: OK | QUESTION | CONFIRMED | CLOSE | ERROR
+    status: OK | QUESTION | CONFIRMED | CLOSE | DRILL_DOWN_REQUIRED | ERROR
     """
     from agents.chart_analyst_session import _is_close, _parse_response
 
     if _is_close(user_message) and not session_images:
         return {"status": "CLOSE", "text": "התחקיר נסגר."}
+
+    print(f"[short_term] ── analyze_st_followup ──")
+    print(f"[short_term] message='{user_message[:60]}'")
+    print(f"[short_term] session_images={len(session_images or [])} | history={len(history)}")
 
     try:
         from google.genai import types
@@ -92,6 +117,8 @@ def analyze_st_followup(
         raw = response.text or ""
 
     except Exception as e:
+        print(f"[short_term] ❌ followup error: {e}")
         return {"status": "ERROR", "error": str(e)}
 
+    print(f"[short_term] followup raw ({len(raw)} תווים): {raw[:200]}...")
     return _parse_response(raw)

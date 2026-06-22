@@ -1,15 +1,18 @@
 """
 agents/short_term_parser.py — parsing, ולידציה ו-payload עבור short_term.
 אחריות: עיבוד תשובות מהמודל בלבד. אין API calls, אין DB.
+parse_drill_down → re-export מ-short_term_drill_down.
 """
 from __future__ import annotations
 import json as _json
+from agents.short_term_drill_down import parse_drill_down  # noqa: F401 — re-export
 
 
 def parse_initial_response(raw: str) -> dict:
     """
     מנסה לפרסר JSON מתשובת המודל.
-    אם נכשל — הטקסט הוא תשובה נרטיבית תקינה (פורמט 6 חוקים).
+    מכיר סטטוסים: OK, NEED_BETTER_CHART, DRILL_DOWN_REQUIRED.
+    אם נכשל — תשובה נרטיבית תקינה (פורמט 6 חוקים).
     """
     cleaned = raw.strip()
     if cleaned.startswith("```"):
@@ -67,8 +70,8 @@ def to_watchlist_payload(result: dict) -> dict:
 def _log_result(result: dict) -> None:
     status = result.get("status", "?")
     symbol = result.get("symbol", "לא זוהה")
-    risk   = " ⚠️ HIGH RISK" if result.get("high_risk") else ""
-    print(f"[short_term] status={status} | symbol={symbol}{risk}")
+    action = f" | drill={result.get('requested_action')}" if status == "DRILL_DOWN_REQUIRED" else ""
+    print(f"[short_term] status={status} | symbol={symbol}{action}")
     if result.get("missing_fields"):
         print(f"[short_term] חסרים: {result['missing_fields']}")
 

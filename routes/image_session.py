@@ -30,30 +30,39 @@ async def chat_image(body: ChatImageBody):
     תומך ב-chart_analyst ו-short_term.
     """
     from agents.router import route
-    from agents.chart_analyst import analyze_chart, validate_for_save as ca_validate
-    from agents.short_term import analyze_short_term, validate_for_save as st_validate
+    from agents.chart_analyst import analyze_chart
+    from agents.short_term import analyze_short_term
 
     routing        = route(body.message, has_image=True)
     effective_type = routing.get("trade_type", body.trade_type)
     agent          = routing["agent"]
 
+    # ── לוג ניתוב — לאבחון בעיות routing ────────────────────────
+    print(f"[image_session] ── בקשה חדשה ──")
+    print(f"[image_session] message='{body.message[:60]}'")
+    print(f"[image_session] has_image=True")
+    print(f"[image_session] routing={routing}")
+    print(f"[image_session] agent_selected='{agent}' | effective_type='{effective_type}'")
+
     async def stream():
         try:
-            # CLARIFY — שומר תמונה, מחזיר שאלה
+            # CLARIFY
             if agent == "CLARIFY":
                 question = routing.get("question", "תוכל להבהיר?")
+                print(f"[image_session] → CLARIFY: {question[:50]}")
                 yield f"data: {_json.dumps({'clarify': True, 'text': question}, ensure_ascii=False)}\n\n"
                 yield f"data: {_json.dumps({'done': True, 'agent': 'router', 'keep_image': True}, ensure_ascii=False)}\n\n"
                 return
 
             yield f"data: {_json.dumps({'agent': agent, 'context': effective_type}, ensure_ascii=False)}\n\n"
 
-            img_bytes       = _b64.b64decode(body.image_data)
-            positions_text  = db.positions_as_text()
-            watchlist_text  = db.watchlist_as_text()
+            img_bytes      = _b64.b64decode(body.image_data)
+            positions_text = db.positions_as_text()
+            watchlist_text = db.watchlist_as_text()
 
-            # ── ניתוח לפי הסוכן שנבחר ──────────────────────────
+            # ── ניתוח לפי הסוכן שנבחר ────────────────────────────
             if agent == "short_term":
+                print(f"[image_session] → analyze_short_term()")
                 result = analyze_short_term(
                     image_bytes=img_bytes,
                     extra_context=body.message,
@@ -61,14 +70,16 @@ async def chat_image(body: ChatImageBody):
                     watchlist_text=watchlist_text,
                 )
             else:
-                # chart_analyst — ברירת מחדל לכל vision אחר
+                print(f"[image_session] → analyze_chart() [agent={agent}]")
                 result = analyze_chart(
                     image_bytes=img_bytes,
                     trade_type=effective_type,
                     extra_context=body.message,
                 )
 
-            # ── טיפול בסטטוסים משותפים ──────────────────────────
+            print(f"[image_session] result.status='{result.get('status')}' | symbol='{result.get('symbol', '?')}'")
+
+            # ── טיפול בסטטוסים ────────────────────────────────────
             if result.get("status") == "NEED_BETTER_CHART":
                 msg = "הגרף לא ברור מספיק. אנא העלה גרף עם ציר זמן, מחירים ו-SMA גלויים."
                 yield f"data: {_json.dumps({'text': msg}, ensure_ascii=False)}\n\n"
@@ -87,9 +98,8 @@ async def chat_image(body: ChatImageBody):
                 yield f"data: {_json.dumps({'error': err}, ensure_ascii=False)}\n\n"
                 return
 
-            # ── בניית תשובה טקסטואלית ────────────────────────────
+            # ── בניית תשובה ───────────────────────────────────────
             response = _build_response_text(result, agent)
-
             chunk_size = 80
             for i in range(0, len(response), chunk_size):
                 yield f"data: {_json.dumps({'text': response[i:i+chunk_size]}, ensure_ascii=False)}\n\n"
@@ -98,6 +108,7 @@ async def chat_image(body: ChatImageBody):
             yield f"data: {_json.dumps({'done': True, 'agent': agent, 'pending_watchlist': result}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
+            print(f"[image_session] ❌ exception: {e}")
             yield f"data: {_json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")
@@ -109,22 +120,18 @@ def _build_response_text(result: dict, agent: str) -> str:
     """בונה תשובה טקסטואלית מתוצאת ניתוח."""
     # תשובה נרטיבית מ-short_term (פורמט 6 חוקים)
     if result.get("raw_text"):
-        risk_flag = "\n\n⚠️ **HIGH RISK** — המחיר מתחת ל-MA_150." if result.get("high_risk") else ""
-        return result["raw_text"] + risk_flag + "\n\nהאם לשמור ל-watchlist? (כן/לא)"
+        return result["raw_text"] + "\n\nהאם לשמור ל-watchlist? (כן/לא)"
 
-    # תשובה JSON מורכבת
-    risk_flag = "\n\n⚠️ **HIGH RISK** — המחיר מתחת ל-MA_150." if result.get("high_risk") else ""
     symbol    = result.get("symbol", "?")
     trigger   = result.get("trigger_price_zone", 0)
     stop      = result.get("stop_loss", 0)
-    atr_note  = result.get("atr_note", "1.5×ATR")
+    atr_note  = result.get("atr_note", "סטופ טכני")
     thesis    = result.get("thesis_summary", "")
     narrative = result.get("narrative", "")
-
-    label = "ניתוח סווינג" if agent == "short_term" else "ניתוח גרף"
+    label     = "ניתוח סווינג" if agent == "short_term" else "ניתוח גרף"
 
     return (
-        f"**{symbol}** — {label}{risk_flag}\n\n"
+        f"**{symbol}** — {label}\n\n"
         f"{narrative}\n\n"
         f"🎯 **טריגר:** ${trigger:,.2f}\n"
         f"🛑 **סטופ:** ${stop:,.2f}  ({atr_note})\n"
